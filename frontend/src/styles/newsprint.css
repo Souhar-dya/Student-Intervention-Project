@@ -1,0 +1,107 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Playfair+Display:wght@400;600;700;900&family=Lora:wght@400;600&display=block");
+@import "tailwindcss";
+
+@theme {
+  --color-newsprint: #f9f9f7;
+  --color-ink: #111111;
+  --color-muted: #e5e5e0;
+  --color-editorial-red: #cc0000;
+  --font-serif: "Playfair Display", "Times New Roman", serif;
+  --font-body: "Lora", Georgia, serif;
+  --font-sans: "Inter", "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "Courier New", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: #f9f9f7;
+}
+
+body {
+  margin: 0;
+  background-color: #f9f9f7;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23111111' fill-opacity='0.04' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
+  color: #111111;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.sharp-corners {
+  border-radius: 0 !important;
+}
+
+.newsprint-texture {
+  position: relative;
+}
+
+.newsprint-texture::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(0deg, transparent 98%, rgb(0 0 0 / 2%) 100%),
+    linear-gradient(90deg, transparent 98%, rgb(0 0 0 / 2%) 100%);
+  background-size: 3px 3px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.newsprint-texture > * {
+  position: relative;
+}
+
+.hard-shadow-hover:hover {
+  box-shadow: 4px 4px 0 0 #111111;
+  transform: translate(-2px, -2px);
+}
+
+.nav-link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  font-family: "Inter", "Helvetica Neue", sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-underline-offset: 4px;
+}
+
+.nav-link:hover {
+  color: #cc0000;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+.field-label {
+  display: block;
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.newsprint-input {
+  border: 0;
+  border-bottom: 2px solid #111111;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.5rem 0.75rem;
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-size: 0.875rem;
+}
+
+.newsprint-input:focus-visible {
+  outline: 2px solid #111111;
+  outline-offset: 2px;
+  background: #f0f0f0;
+}
