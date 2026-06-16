@@ -55,6 +55,12 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     },
   });
 
+  if (response.status === 401) {
+    clearAuthSession();
+    window.dispatchEvent(new Event("auth-expired"));
+    throw new Error("Session expired");
+  }
+
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);

@@ -1646,6 +1646,7 @@ function EvaluatePanel({
     [student, prediction, recommendation],
   );
   const [draft, setDraft] = useState<ParentMailDraft>(defaultDraft);
+  const [feedbackGiven, setFeedbackGiven] = useState(false);
   const canPrepareParentEmail = prediction ? isParentMailEligible(prediction) : false;
   const canSendParentEmail =
     canPrepareParentEmail &&
@@ -1657,6 +1658,10 @@ function EvaluatePanel({
   useEffect(() => {
     setDraft(defaultDraft);
   }, [defaultDraft]);
+
+  useEffect(() => {
+    setFeedbackGiven(false);
+  }, [recommendation]);
 
   return (
     <section className="grid grid-cols-12 border-b border-ink" id="evaluation">
@@ -1697,19 +1702,19 @@ function EvaluatePanel({
         />
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
           <Button
-            disabled={isBusy || !recommendation}
+            disabled={isBusy || !recommendation || feedbackGiven}
             isLoading={runningAction === "feedback-useful"}
             loadingLabel="Saving"
-            onClick={() => recordFeedback("useful")}
+            onClick={() => { recordFeedback("useful"); setFeedbackGiven(true); }}
           >
             Useful
           </Button>
           <Button
-            disabled={isBusy || !recommendation}
+            disabled={isBusy || !recommendation || feedbackGiven}
             isLoading={runningAction === "feedback-not-useful"}
             loadingLabel="Saving"
             variant="secondary"
-            onClick={() => recordFeedback("not_useful")}
+            onClick={() => { recordFeedback("not_useful"); setFeedbackGiven(true); }}
           >
             Not useful
           </Button>

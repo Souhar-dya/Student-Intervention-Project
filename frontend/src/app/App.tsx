@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AppShell } from "../components/layout/AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
@@ -7,6 +7,14 @@ import { clearAuthSession, getStoredAuthSession, login, storeAuthSession } from 
 
 export function App() {
   const [session, setSession] = useState(getStoredAuthSession);
+
+  useEffect(() => {
+    function handleAuthExpired() {
+      setSession(null);
+    }
+    window.addEventListener("auth-expired", handleAuthExpired);
+    return () => window.removeEventListener("auth-expired", handleAuthExpired);
+  }, []);
 
   async function handleLogin(username: string, password: string) {
     const nextSession = await login(username, password);
