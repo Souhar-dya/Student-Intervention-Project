@@ -14,7 +14,9 @@ from student_success_assistant.schemas.follow_up import (
     FollowUpCaseCreateRequest,
     FollowUpCaseResponse,
     FollowUpCaseUpdateRequest,
+    FollowUpDecision,
 )
+from student_success_assistant.schemas.prediction import RiskCategory
 
 router = APIRouter(tags=["follow-up"])
 
@@ -61,27 +63,52 @@ def assess_saved_follow_up_case(
     case_id: str,
     service: FollowUpService = Depends(get_follow_up_service),
     repository: FollowUpRepository = Depends(get_follow_up_repository),
+    direct_decision: str | None = Query(None),
 ) -> FollowUpCaseResponse:
     try:
         case = repository.get_case(case_id)
         if case is None:
             raise HTTPException(status_code=404, detail="Follow-up case not found.")
-        if not case.note.strip():
+        if not case.note.strip() and direct_decision is None:
             raise HTTPException(status_code=400, detail="Add what happened before assessing.")
-        assessment = service.assess(
-            FollowUpAssessmentRequest(
-                student=case.student,
-                current_risk_category=case.risk_category,
-                current_risk_score=case.risk_score,
-                recommendation=case.recommendation or case.recommendation_summary,
-                advisor_note=case.note,
-                weeks_since_plan=2,
-                plan_followed=case.plan_followed,
-                attendance_trend=case.attendance_trend,
-                marks_trend=case.marks_trend,
-                failures_trend=case.failures_trend,
+
+        if direct_decision is not None:
+            # Advisor bypass — apply their decision directly, no LLM call
+            decision_map = {
+                "close": ("Close ticket", "Closed", "", None),
+                "monitor": ("Monitor", "Monitoring", "", None),
+                "escalate": ("Escalate", "Escalated", "Counsellor", RiskCategory.high),
+                "downgrade": ("Downgrade risk", "Monitoring", "", RiskCategory.medium),
+            }
+            norm = direct_decision.strip().lower()
+            if norm not in decision_map:
+                raise HTTPException(status_code=400, detail=f"Invalid direct_decision: {direct_decision}")
+            d, status, target, risk = decision_map[norm]
+            assessment = FollowUpAssessmentResponse(
+                decision=FollowUpDecision(d),
+                recommended_status=status,
+                escalation_target=target,
+                rationale=f"Advisor requested: {direct_decision}",
+                next_steps="",
+                confidence=1.0,
+                generated_by="advisor",
+                new_risk_category=risk,
             )
-        )
+        else:
+            assessment = service.assess(
+                FollowUpAssessmentRequest(
+                    student=case.student,
+                    current_risk_category=case.risk_category,
+                    current_risk_score=case.risk_score,
+                    recommendation=case.recommendation or case.recommendation_summary,
+                    advisor_note=case.note,
+                    weeks_since_plan=2,
+                    plan_followed=case.plan_followed,
+                    attendance_trend=case.attendance_trend,
+                    marks_trend=case.marks_trend,
+                    failures_trend=case.failures_trend,
+                )
+            )
         updated = repository.store_assessment(
             case_id=case_id,
             decision=assessment.decision.value,
@@ -91,6 +118,7 @@ def assess_saved_follow_up_case(
             next_steps=assessment.next_steps,
             confidence=assessment.confidence,
             generated_by=assessment.generated_by,
+            new_risk_category=assessment.new_risk_category.value if assessment.new_risk_category else None,
         )
     except HTTPException:
         raise

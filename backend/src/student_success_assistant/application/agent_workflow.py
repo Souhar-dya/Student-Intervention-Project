@@ -209,7 +209,7 @@ class AgentWorkflow:
         )
 
     def _call_llm(self, state: AdvisorGraphState | dict[str, Any]) -> str | None:
-        llm = get_chat_llm()
+        llm = get_chat_llm(max_tokens=600)
         if llm is None:
             return None
 
@@ -217,38 +217,30 @@ class AgentWorkflow:
         retrieved_cases = state.get("retrieved_cases", [])
         tool_outputs = state.get("tool_outputs", [])
         evidence = (
-            "\n".join(f"- {case.case_text}" for case in retrieved_cases[:5])
+            "\n".join(f"- {case.case_text}" for case in retrieved_cases[:3])
             or "- No cases retrieved."
         )
         tools = "\n".join(
             f"- {item['name']}: {item['output']}" for item in tool_outputs
         ) or "- No tool outputs."
+        student_profile = state.get('student_profile_summary', 'not provided')
         prompt = (
-            "You are an academic advisor assistant. Generate one grounded intervention. "
-            "Use only the evidence, risk signals, advisor feedback examples, and judge examples below. "
-            "Treat useful feedback as patterns to follow and not-useful feedback as patterns to avoid. "
-            "Do not copy the baseline plan verbatim; adapt the response to the strongest risk drivers, "
-            "retrieved cases, and advisor query. Vary the wording and choose only interventions that fit "
-            "this case. "
-            "Avoid template-like repetition across requests: choose different but still evidence-grounded "
-            "phrasing, sequencing, and support details when the case allows it. "
-            "Do not use retrieved cases as reassuring evidence if their failures or attendance are materially "
-            "better than the current student. If evidence is mixed or weaker than the current case, say that "
-            "support should be escalated rather than softened. "
-            "Make the recommendation proportional to the risk score: low risk should be light-touch. "
-            "For medium and high risk, do not always default to the same parent-teacher meeting plus "
-            "one-subject-focus script. Choose a fitting mix from options such as attendance mapping, "
-            "teacher checkpoint, skill diagnostic, peer study partner, supervised homework block, "
-            "mentor owner, family call, short recovery contract, or counseling/support check. Mention "
-            "PTM/parent-teacher meeting only when justified by risk level or weak early progress. "
-            "Include 3 parts: immediate action, support plan, and follow-up check.\n\n"
+            "You are an academic advisor assistant. Analyze the student's data and output "
+            "a concise 3-5 sentence recommendation covering: root causes (with numbers), "
+            "one immediate action (next 7 days), and a support plan (2-3 actions with "
+            "WHO/WHAT/METRIC).\n\n"
+            "Grading: final out of 20, pass at 10/20.\n"
+            f"Risk: {prediction.risk_category}. "
+            "Match intensity: High = daily/weekly, Medium = weekly/biweekly, Low = monthly.\n"
+            "Be specific with numbers. No bullet lists, no section headers — just plain "
+            "paragraphs.\n\n"
             f"Query: {state['query']}\n"
-            f"Current student: {state.get('student_profile_summary', 'not provided')}\n"
+            f"Current student: {student_profile}\n"
             f"Risk category: {prediction.risk_category}\n"
             f"Risk score: {prediction.risk_score}\n"
             f"Retrieved evidence:\n{evidence}\n\n"
             f"Tool outputs:\n{tools}\n\n"
-            "Return concise advisor-facing text with reasoning."
+            "Return concise advisor-facing text."
         )
         try:
             response = llm.invoke(prompt)

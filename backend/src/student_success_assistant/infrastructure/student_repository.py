@@ -6,6 +6,15 @@ from typing import Any
 from student_success_assistant.infrastructure.database import db_connection
 
 
+STUDENT_COLS = [
+    "student_id", "school", "age", "attendance", "failures", "absences",
+    "study_time", "previous_grade_average", "final_grade", "outcome", "raw_payload",
+]
+STUDENT_UPD_COLS = [c for c in STUDENT_COLS if c != "student_id"]
+
+BATCH_SIZE = 500
+
+
 class StudentRepository:
     def initialize(self) -> None:
         from student_success_assistant.infrastructure.database import create_tables
@@ -20,51 +29,48 @@ class StudentRepository:
         case_text: str,
         payload: dict[str, Any],
     ) -> None:
+        self.batch_upsert_student_cases([(student, case_id, case_text, payload)])
+
+    def batch_upsert_student_cases(
+        self,
+        rows: list[tuple[dict[str, Any], str, str, dict[str, Any]]],
+    ) -> None:
         with db_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO students (
-                        student_id, school, age, attendance, failures, absences, study_time,
-                        previous_grade_average, final_grade, outcome, raw_payload
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                    ON CONFLICT (student_id) DO UPDATE SET
-                        school = EXCLUDED.school,
-                        age = EXCLUDED.age,
-                        attendance = EXCLUDED.attendance,
-                        failures = EXCLUDED.failures,
-                        absences = EXCLUDED.absences,
-                        study_time = EXCLUDED.study_time,
-                        previous_grade_average = EXCLUDED.previous_grade_average,
-                        final_grade = EXCLUDED.final_grade,
-                        outcome = EXCLUDED.outcome,
-                        raw_payload = EXCLUDED.raw_payload
-                    """,
-                    (
-                        student["student_id"],
-                        student["school"],
-                        student["age"],
-                        student["attendance"],
-                        student["failures"],
-                        student["absences"],
-                        student["study_time"],
-                        student["previous_grade_average"],
-                        student["final_grade"],
-                        student["outcome"],
-                        json.dumps(student.get("raw_payload", {})),
-                    ),
-                )
-                cursor.execute(
-                    """
-                    INSERT INTO student_cases (case_id, student_id, case_text, payload)
-                    VALUES (%s, %s, %s, %s::jsonb)
-                    ON CONFLICT (case_id) DO UPDATE SET
-                        case_text = EXCLUDED.case_text,
-                        payload = EXCLUDED.payload
-                    """,
-                    (case_id, student["student_id"], case_text, json.dumps(payload)),
-                )
+                for i in range(0, len(rows), BATCH_SIZE):
+                    batch = rows[i : i + BATCH_SIZE]
+                    for student, case_id, case_text, payload in batch:
+                        cursor.execute(
+                            f"""
+                            INSERT INTO students ({', '.join(STUDENT_COLS)})
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                            ON CONFLICT (student_id) DO UPDATE SET
+                                {', '.join(f'{c} = EXCLUDED.{c}' for c in STUDENT_UPD_COLS)}
+                            """,
+                            (
+                                student["student_id"],
+                                student["school"],
+                                student["age"],
+                                student["attendance"],
+                                student["failures"],
+                                student["absences"],
+                                student["study_time"],
+                                student["previous_grade_average"],
+                                student["final_grade"],
+                                student["outcome"],
+                                json.dumps(student.get("raw_payload", {})),
+                            ),
+                        )
+                        cursor.execute(
+                            """
+                            INSERT INTO student_cases (case_id, student_id, case_text, payload)
+                            VALUES (%s, %s, %s, %s::jsonb)
+                            ON CONFLICT (case_id) DO UPDATE SET
+                                case_text = EXCLUDED.case_text,
+                                payload = EXCLUDED.payload
+                            """,
+                            (case_id, student["student_id"], case_text, json.dumps(payload)),
+                        )
             connection.commit()
 
     def list_cases(self, limit: int = 1000) -> list[dict[str, Any]]:

@@ -33,6 +33,7 @@ class FollowUpDecision(StrEnum):
     close = "Close ticket"
     monitor = "Monitor"
     escalate = "Escalate"
+    downgrade = "Downgrade risk"
 
 
 class FollowUpAssessmentRequest(BaseModel):
@@ -56,6 +57,7 @@ class FollowUpAssessmentResponse(BaseModel):
     next_steps: str
     confidence: float = Field(..., ge=0, le=1)
     generated_by: str
+    new_risk_category: RiskCategory | None = None
 
 
 class FollowUpCaseEvent(BaseModel):

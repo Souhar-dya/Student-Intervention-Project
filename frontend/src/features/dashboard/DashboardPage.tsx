@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   BrainCircuit,
   CheckCircle2,
-  Database,
-  FileStack,
   LoaderCircle,
   Mail,
   Search,
@@ -16,11 +14,8 @@ import type { LucideIcon } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import {
   assessSavedFollowUpCase,
-  buildEmbeddings,
   buildSimilarCaseFilters,
   evaluateRecommendation,
-  ingestDataset,
-  initializeStorage,
   listFollowUpCases,
   predictRisk,
   recommendIntervention,
@@ -29,47 +24,38 @@ import {
   sendParentEmail,
   submitFeedback,
   summarizeFactors,
-  trainModels,
   updateFollowUpCase,
 } from "../../shared/api/client";
 import type {
   EvaluationResponse,
   FactorInsightResponse,
-  FailureTrend,
   FeatureContribution,
   FollowUpCaseEvent,
   FollowUpCaseResponse,
   FollowUpCaseUpdateRequest,
-  IngestionResult,
   ParentEmailResponse,
   PlanFollowed,
   PredictionResponse,
-  ProgressTrend,
   RecommendationResponse,
   RetrievedCase,
   RiskCategory,
   StudentProfile,
-  TrainingResult,
 } from "../../shared/api/types";
 
-type StepId = "prepare" | "student" | "factors" | "analysis" | "follow-up" | "evaluate";
+type StepId = "student" | "analysis" | "evaluate" | "follow-up" | "factors";
 type ActionId =
-  | "build-embeddings"
   | "evaluate"
   | "factors"
   | "feedback-not-useful"
   | "feedback-useful"
   | "follow-up"
   | "full-analysis"
-  | "ingest-dataset"
-  | "init-storage"
   | "load-follow-up"
   | "parent-email"
   | "predict"
   | "recommend"
   | "search"
-  | "save-follow-up"
-  | "train-models";
+  | "save-follow-up";
 type NumericStudentField =
   | "age"
   | "attendance"
@@ -154,7 +140,6 @@ const defaultStudent: StudentDraft = {
 };
 
 const steps: Array<{ id: StepId; label: string; caption: string }> = [
-  { id: "prepare", label: "Prepare", caption: "Data and models" },
   { id: "student", label: "Student", caption: "Case intake" },
   { id: "analysis", label: "Analysis", caption: "Risk and evidence" },
   { id: "evaluate", label: "Evaluate", caption: "Judge and feedback" },
@@ -182,17 +167,21 @@ export function DashboardPage() {
   const [prediction, setPrediction] = useState<PredictionResponse | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
   const [evaluation, setEvaluation] = useState<EvaluationResponse | null>(null);
+  const [judged, setJudged] = useState(false);
   const [parentEmailResult, setParentEmailResult] = useState<ParentEmailResponse | null>(null);
   const [factorInsights, setFactorInsights] = useState<FactorInsightResponse | null>(null);
   const [factorMeta, setFactorMeta] = useState<{ prompt: string; updatedAt: string } | null>(null);
   const [pendingFactorPrompt, setPendingFactorPrompt] = useState<string | null>(null);
-  const [ingestion, setIngestion] = useState<IngestionResult | null>(null);
-  const [training, setTraining] = useState<TrainingResult | null>(null);
-  const [pipelineLog, setPipelineLog] = useState<string[]>([]);
   const [caseRecords, setCaseRecords] = useState<StudentCaseRecord[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [assessingCaseId, setAssessingCaseId] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ActionId | null>(null);
+  const runningActionRef = useRef(runningAction);
+  runningActionRef.current = runningAction;
+
+  useEffect(() => {
+    setJudged(false);
+  }, [recommendation]);
 
   const stats = useMemo(
     () => [
@@ -329,15 +318,26 @@ export function DashboardPage() {
     setStatus(`${record.student_id} opened in follow-up`);
   }
 
+  async function removeCaseRecord(id: string) {
+    try {
+      await updateFollowUpCase(id, { status: "Removed" }, false);
+    } catch {
+      // ignore removal failures
+    }
+    setCaseRecords((previous) => previous.filter((record) => record.id !== id));
+    setSelectedCaseId((previous) => previous === id ? null : previous);
+    setStatus("Ticket removed");
+  }
+
   function loadCaseStudentIntoForm(record: StudentCaseRecord) {
     setStudent(studentDraftFromRecord(record));
     setStatus(`${record.student_id} loaded into student intake`);
     setActiveStep("student");
   }
 
-  async function runFollowUpAssessment(record: StudentCaseRecord) {
+  async function runFollowUpAssessment(record: StudentCaseRecord, directDecision?: string) {
     const note = record.note.trim();
-    if (!note) {
+    if (!note && !directDecision) {
       setStatus("Add what happened before assessing follow-up");
       return;
     }
@@ -354,7 +354,7 @@ export function DashboardPage() {
           note: record.note,
           plan_followed: record.plan_followed,
         }, false);
-        return assessSavedFollowUpCase(record.id);
+        return assessSavedFollowUpCase(record.id, directDecision);
       },
       "Follow-up assessment failed",
     );
@@ -374,10 +374,11 @@ export function DashboardPage() {
     action: () => Promise<T>,
     fallbackMessage: string,
   ) {
-    if (runningAction) {
+    if (runningActionRef.current) {
       return null;
     }
 
+    runningActionRef.current = actionId;
     setRunningAction(actionId);
     setStatus(label);
     try {
@@ -386,6 +387,7 @@ export function DashboardPage() {
       setStatus(error instanceof Error ? error.message : fallbackMessage);
       return null;
     } finally {
+      runningActionRef.current = null;
       setRunningAction(null);
     }
   }
@@ -451,7 +453,6 @@ export function DashboardPage() {
       }
       setParentEmailResult(null);
       setStatus("Recommendation ready");
-      setActiveStep("analysis");
     }
   }
 
@@ -477,6 +478,7 @@ export function DashboardPage() {
         prompt: requestedPrompt,
         updatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       });
+      setFactorPrompt("");
       setStatus("Factor analysis ready");
       setActiveStep("factors");
     }
@@ -540,6 +542,7 @@ export function DashboardPage() {
     );
     if (result) {
       setEvaluation(result);
+      setJudged(true);
       setStatus("Evaluation complete");
       setActiveStep("evaluate");
     }
@@ -597,10 +600,11 @@ export function DashboardPage() {
   }
 
   async function runPipelineStep(actionId: ActionId, label: string, action: () => Promise<unknown>) {
-    if (runningAction) {
+    if (runningActionRef.current) {
       return null;
     }
 
+    runningActionRef.current = actionId;
     setRunningAction(actionId);
     setStatus(label);
     try {
@@ -614,6 +618,7 @@ export function DashboardPage() {
       setStatus(message);
       return null;
     } finally {
+      runningActionRef.current = null;
       setRunningAction(null);
     }
   }
@@ -624,20 +629,6 @@ export function DashboardPage() {
         <Hero runningAction={runningAction} status={status} stats={stats} onRun={runFullAnalysis} />
 
         <StepNav activeStep={activeStep} onSelect={setActiveStep} />
-
-        {activeStep === "prepare" ? (
-          <PreparePanel
-            datasetPath={datasetPath}
-            ingestion={ingestion}
-            pipelineLog={pipelineLog}
-            setDatasetPath={setDatasetPath}
-            setIngestion={setIngestion}
-            setTraining={setTraining}
-            training={training}
-            runningAction={runningAction}
-            runPipelineStep={runPipelineStep}
-          />
-        ) : null}
 
         {activeStep === "student" ? (
           <StudentPanel
@@ -668,11 +659,11 @@ export function DashboardPage() {
         {activeStep === "analysis" ? (
           <AnalysisPanel
             cases={cases}
+            judged={judged}
             prediction={prediction}
             recommendation={recommendation}
             runningAction={runningAction}
             runEvaluation={runEvaluation}
-            runFullAnalysis={runFullAnalysis}
           />
         ) : null}
 
@@ -683,6 +674,7 @@ export function DashboardPage() {
             onAssessFollowUp={runFollowUpAssessment}
             onLoadStudent={loadCaseStudentIntoForm}
             onPatchCase={patchCaseLocally}
+            onRemoveCase={removeCaseRecord}
             onSelectCase={selectCaseRecord}
             onUpdateCase={updateCaseRecord}
             runningAction={runningAction}
@@ -693,6 +685,7 @@ export function DashboardPage() {
         {activeStep === "evaluate" ? (
           <EvaluatePanel
             evaluation={evaluation}
+            judged={judged}
             parentEmailResult={parentEmailResult}
             prediction={prediction}
             recommendation={recommendation}
@@ -700,6 +693,7 @@ export function DashboardPage() {
             runningAction={runningAction}
             runParentEmail={runParentEmail}
             runEvaluation={runEvaluation}
+            onRetryRecommendation={runRecommendation}
             student={student}
           />
         ) : null}
@@ -768,7 +762,7 @@ function StepNav({
   onSelect: (step: StepId) => void;
 }) {
   return (
-    <nav aria-label="Workflow steps" className="grid border-b border-ink md:grid-cols-6">
+    <nav aria-label="Workflow steps" className="grid border-b border-ink md:grid-cols-5">
       {steps.map((step, index) => (
         <button
           className={`min-h-20 border-r border-ink px-4 py-3 text-left transition-colors ${
@@ -784,124 +778,6 @@ function StepNav({
         </button>
       ))}
     </nav>
-  );
-}
-
-function PreparePanel({
-  datasetPath,
-  ingestion,
-  pipelineLog,
-  runningAction,
-  runPipelineStep,
-  setDatasetPath,
-  setIngestion,
-  setTraining,
-  training,
-}: {
-  datasetPath: string;
-  ingestion: IngestionResult | null;
-  pipelineLog: string[];
-  runningAction: ActionId | null;
-  runPipelineStep: (
-    actionId: ActionId,
-    label: string,
-    action: () => Promise<unknown>,
-  ) => Promise<unknown | null>;
-  setDatasetPath: (value: string) => void;
-  setIngestion: (value: IngestionResult) => void;
-  setTraining: (value: TrainingResult) => void;
-  training: TrainingResult | null;
-}) {
-  const isBusy = runningAction !== null;
-
-  return (
-    <section className="grid grid-cols-12 border-b border-ink" id="pipeline">
-      <div className="col-span-12 border-r border-ink p-6 lg:col-span-5">
-        <PanelHeading eyebrow="Pipeline desk" title="Prepare data and models" />
-        <p className="mt-4 text-justify font-body text-base leading-relaxed">
-          The app uses the merged math and Portuguese dataset by default. Import a CSV only when
-          you add a new source file.
-        </p>
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <Button
-            disabled={isBusy}
-            isLoading={runningAction === "init-storage"}
-            loadingLabel="Initializing"
-            onClick={() => runPipelineStep("init-storage", "Initialize storage", initializeStorage)}
-          >
-            Init DB
-          </Button>
-          <Button
-            disabled={isBusy}
-            isLoading={runningAction === "build-embeddings"}
-            loadingLabel="Building"
-            variant="secondary"
-            onClick={() => runPipelineStep("build-embeddings", "Build embeddings", () => buildEmbeddings(1000))}
-          >
-            Qdrant
-          </Button>
-          <Button
-            disabled={isBusy}
-            isLoading={runningAction === "train-models"}
-            loadingLabel="Training"
-            variant="secondary"
-            onClick={async () => {
-              const result = await runPipelineStep("train-models", "Train models", () => trainModels(datasetPath));
-              if (result) {
-                setTraining(result as TrainingResult);
-              }
-            }}
-          >
-            Train LR/RF/XGBoost
-          </Button>
-        </div>
-        <details className="mt-6 border border-ink p-4">
-          <summary className="cursor-pointer font-mono text-xs font-bold uppercase tracking-widest">
-            Import a new CSV
-          </summary>
-          <label className="field-label mt-4">
-            Dataset path
-            <input
-              className="newsprint-input mt-2 w-full"
-              value={datasetPath}
-              onChange={(event) => setDatasetPath(event.target.value)}
-            />
-          </label>
-          <Button
-            className="mt-4 w-full"
-            disabled={isBusy}
-            isLoading={runningAction === "ingest-dataset"}
-            loadingLabel="Ingesting"
-            variant="secondary"
-            onClick={async () => {
-              const result = await runPipelineStep("ingest-dataset", "Ingest dataset", () =>
-                ingestDataset(datasetPath),
-              );
-              if (result) {
-                setIngestion(result as IngestionResult);
-              }
-            }}
-          >
-            Ingest CSV
-          </Button>
-        </details>
-      </div>
-      <div className="col-span-12 p-6 lg:col-span-7">
-        <div className="grid gap-4 md:grid-cols-2">
-          <MetricPanel icon={Database} label="Imported" value={ingestion?.imported ?? "--"} />
-          <MetricPanel icon={FileStack} label="Skipped" value={ingestion?.skipped ?? "--"} />
-          <MetricPanel icon={CheckCircle2} label="Best model" value={training?.best_model ?? "--"} />
-          <MetricPanel icon={BarChart3} label="Best F1" value={bestF1(training)} />
-        </div>
-        <div className="mt-6 grid border-l border-t border-ink md:grid-cols-2">
-          <PipelineBadge icon={Search} label="Retrieval" value="Dense + BM25 + RRF" />
-          <PipelineBadge icon={BrainCircuit} label="Reranker" value="BGE top 20 to top 5" />
-          <PipelineBadge icon={BarChart3} label="Training" value="LR + RF + XGBoost" />
-          <PipelineBadge icon={ShieldAlert} label="Explainability" value="SHAP for ML artifacts" />
-        </div>
-        <LogList entries={pipelineLog.length ? pipelineLog : ["No pipeline actions yet"]} />
-      </div>
-    </section>
   );
 }
 
@@ -1143,18 +1019,18 @@ function FactorResultState({
 
 function AnalysisPanel({
   cases,
+  judged,
   prediction,
   recommendation,
   runningAction,
   runEvaluation,
-  runFullAnalysis,
 }: {
   cases: RetrievedCase[];
+  judged: boolean;
   prediction: PredictionResponse | null;
   recommendation: RecommendationResponse | null;
   runningAction: ActionId | null;
   runEvaluation: () => void;
-  runFullAnalysis: () => void;
 }) {
   const isBusy = runningAction !== null;
 
@@ -1189,20 +1065,11 @@ function AnalysisPanel({
         <p className="mt-4 font-mono text-xs uppercase tracking-widest">
           Evidence: {recommendation?.evidence_case_ids.join(", ") || "None"}
         </p>
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+        <div className="mt-6">
           <Button
-            disabled={isBusy}
-            isLoading={runningAction === "full-analysis"}
-            loadingLabel="Refreshing"
-            onClick={runFullAnalysis}
-          >
-            Refresh analysis
-          </Button>
-          <Button
-            disabled={isBusy || !recommendation}
+            disabled={isBusy || !recommendation || judged}
             isLoading={runningAction === "evaluate"}
             loadingLabel="Evaluating"
-            variant="secondary"
             onClick={runEvaluation}
           >
             Evaluate recommendation
@@ -1230,6 +1097,7 @@ function FollowUpPanel({
   onAssessFollowUp,
   onLoadStudent,
   onPatchCase,
+  onRemoveCase,
   onSelectCase,
   onUpdateCase,
   runningAction,
@@ -1237,15 +1105,16 @@ function FollowUpPanel({
 }: {
   assessingCaseId: string | null;
   caseRecords: StudentCaseRecord[];
-  onAssessFollowUp: (record: StudentCaseRecord) => void;
+  onAssessFollowUp: (record: StudentCaseRecord, directDecision?: string) => void;
   onLoadStudent: (record: StudentCaseRecord) => void;
   onPatchCase: (id: string, changes: Partial<StudentCaseRecord>) => void;
+  onRemoveCase: (id: string) => void;
   onSelectCase: (record: StudentCaseRecord) => void;
   onUpdateCase: (id: string, changes: FollowUpCaseUpdateRequest) => void;
   runningAction: ActionId | null;
   selectedCase: StudentCaseRecord | null;
 }) {
-  const activeRecords = caseRecords.filter((record) => record.status !== "Closed");
+  const activeRecords = caseRecords.filter((record) => record.status !== "Closed" && record.status !== "Removed");
   const closedRecords = caseRecords.filter((record) => record.status === "Closed");
   const escalatedCount = activeRecords.filter((record) => record.status === "Escalated").length;
 
@@ -1295,6 +1164,7 @@ function FollowUpPanel({
             onAssessFollowUp={onAssessFollowUp}
             onLoadStudent={onLoadStudent}
             onPatchCase={onPatchCase}
+            onRemoveCase={onRemoveCase}
             onUpdateCase={onUpdateCase}
             record={selectedCase}
             runningAction={runningAction}
@@ -1408,7 +1278,7 @@ function FollowUpTicketCard({
           </span>
         </span>
         <span className="border border-current px-2 py-1 font-mono text-[0.65rem] uppercase tracking-widest">
-          Open
+          {record.status}
         </span>
       </span>
       <span className="mt-3 block truncate font-body text-sm">
@@ -1423,14 +1293,16 @@ function FollowUpDetailView({
   onAssessFollowUp,
   onLoadStudent,
   onPatchCase,
+  onRemoveCase,
   onUpdateCase,
   record,
   runningAction,
 }: {
   assessingCaseId: string | null;
-  onAssessFollowUp: (record: StudentCaseRecord) => void;
+  onAssessFollowUp: (record: StudentCaseRecord, directDecision?: string) => void;
   onLoadStudent: (record: StudentCaseRecord) => void;
   onPatchCase: (id: string, changes: Partial<StudentCaseRecord>) => void;
+  onRemoveCase: (id: string) => void;
   onUpdateCase: (id: string, changes: FollowUpCaseUpdateRequest) => void;
   record: StudentCaseRecord | null;
   runningAction: ActionId | null;
@@ -1453,10 +1325,26 @@ function FollowUpDetailView({
   const isBusy = runningAction !== null;
 
   function handleAssess() {
-    const combinedNote = advisorSuggestion
-      ? `${currentRecord.note}\n\nAdvisor suggestion: ${advisorSuggestion}`
-      : currentRecord.note;
-    onAssessFollowUp({ ...currentRecord, note: combinedNote });
+    const directive = parseDirective(advisorSuggestion);
+    if (directive) {
+      onAssessFollowUp(currentRecord, directive);
+    } else {
+      const combinedNote = advisorSuggestion
+        ? `${currentRecord.note}\n\nAdvisor suggestion: ${advisorSuggestion}`
+        : currentRecord.note;
+      onAssessFollowUp({ ...currentRecord, note: combinedNote });
+    }
+    onPatchCase(currentRecord.id, { note: "" });
+    setAdvisorSuggestion("");
+  }
+
+  function parseDirective(text: string): string | null {
+    const trimmed = text.trim().toLowerCase();
+    if (/\b(close|closing|remove|removed)\b/.test(trimmed)) return "close";
+    if (/\b(downgrade|demote|reduced)\b/.test(trimmed)) return "downgrade";
+    if (/\b(escalate|escalated|elevate)\b/.test(trimmed)) return "escalate";
+    if (/\b(monitor|monitoring|keep|watch|maintain)\b/.test(trimmed)) return "monitor";
+    return null;
   }
 
   return (
@@ -1482,6 +1370,7 @@ function FollowUpDetailView({
               What happened after two weeks
               <textarea
                 className="newsprint-input mt-2 min-h-32 w-full resize-y"
+                disabled={currentRecord.status === "Closed"}
                 value={currentRecord.note}
                 onChange={(event) => onPatchCase(currentRecord.id, { note: event.target.value })}
               />
@@ -1490,27 +1379,40 @@ function FollowUpDetailView({
               Advisor suggestion
               <textarea
                 className="newsprint-input mt-2 min-h-20 w-full resize-y"
+                disabled={currentRecord.status === "Closed"}
                 placeholder="Optional: note your recommendation for this case..."
                 value={advisorSuggestion}
                 onChange={(event) => setAdvisorSuggestion(event.target.value)}
               />
             </label>
           <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-            <Button
-              disabled={isBusy && !isAssessing}
-              isLoading={isAssessing}
-              loadingLabel="Assessing"
-              onClick={handleAssess}
-            >
-              Assess follow-up
-            </Button>
-            <Button
-              disabled={isBusy}
-              variant="secondary"
-              onClick={() => onLoadStudent(currentRecord)}
-            >
-              Load student
-            </Button>
+            {currentRecord.status === "Closed" ? (
+              <Button
+                disabled={isBusy}
+                variant="secondary"
+                onClick={() => onRemoveCase(currentRecord.id)}
+              >
+                Remove ticket
+              </Button>
+            ) : (
+              <>
+                <Button
+                  disabled={isBusy && !isAssessing}
+                  isLoading={isAssessing}
+                  loadingLabel="Assessing"
+                  onClick={handleAssess}
+                >
+                  Assess follow-up
+                </Button>
+                <Button
+                  disabled={isBusy}
+                  variant="secondary"
+                  onClick={() => onLoadStudent(currentRecord)}
+                >
+                  Load student
+                </Button>
+              </>
+            )}
           </div>
           <div className="mt-6 border-l-4 border-ink pl-4">
             <p className="font-mono text-xs uppercase tracking-widest text-red-700">Original plan</p>
@@ -1621,6 +1523,7 @@ function SmallStat({ label, value }: { label: string; value: string | number }) 
 
 function EvaluatePanel({
   evaluation,
+  judged,
   parentEmailResult,
   prediction,
   recommendation,
@@ -1628,9 +1531,11 @@ function EvaluatePanel({
   runningAction,
   runParentEmail,
   runEvaluation,
+  onRetryRecommendation,
   student,
 }: {
   evaluation: EvaluationResponse | null;
+  judged: boolean;
   parentEmailResult: ParentEmailResponse | null;
   prediction: PredictionResponse | null;
   recommendation: RecommendationResponse | null;
@@ -1638,6 +1543,7 @@ function EvaluatePanel({
   runningAction: ActionId | null;
   runParentEmail: (draft: ParentMailDraft) => void;
   runEvaluation: () => void;
+  onRetryRecommendation: () => void;
   student: StudentDraft;
 }) {
   const isBusy = runningAction !== null;
@@ -1682,7 +1588,7 @@ function EvaluatePanel({
         </div>
         <Button
           className="mt-6 w-full"
-          disabled={isBusy || !recommendation}
+          disabled={isBusy || !recommendation || judged}
           isLoading={runningAction === "evaluate"}
           loadingLabel="Judging"
           onClick={runEvaluation}
@@ -1711,10 +1617,13 @@ function EvaluatePanel({
           </Button>
           <Button
             disabled={isBusy || !recommendation || feedbackGiven}
-            isLoading={runningAction === "feedback-not-useful"}
-            loadingLabel="Saving"
+            isLoading={runningAction === "feedback-not-useful" || runningAction === "recommend"}
+            loadingLabel="Retrying"
             variant="secondary"
-            onClick={() => { recordFeedback("not_useful"); setFeedbackGiven(true); }}
+            onClick={async () => {
+              await recordFeedback("not_useful");
+              onRetryRecommendation();
+            }}
           >
             Not useful
           </Button>

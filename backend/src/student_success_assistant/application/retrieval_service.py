@@ -5,7 +5,6 @@ from student_success_assistant.infrastructure.student_repository import StudentR
 from student_success_assistant.schemas.retrieval import RetrievedCase, SearchRequest, SearchResponse
 
 HYBRID_CANDIDATE_LIMIT = 20
-RRF_K = 60
 
 
 class RetrievalService:
@@ -36,24 +35,16 @@ class RetrievalService:
 
     def _search_hybrid(self, request: SearchRequest) -> SearchResponse:
         filters = request.filters.model_dump(exclude_none=True)
-        dense_matches = self._dense_qdrant_matches(request, filters)
-        sparse_matches = self._sparse_bm25_matches(request, filters)
-        fused = self._rrf_fuse([dense_matches, sparse_matches])
-        reranked = self._reranker.rerank(
-            request.query,
-            fused[:HYBRID_CANDIDATE_LIMIT],
-            limit=request.top_k,
-        )
-        return self._to_response(request.query, reranked)
-
-    def _dense_qdrant_matches(self, request: SearchRequest, filters: dict) -> list[dict]:
         vector = self._embedding_provider.embed(request.query)
         matches = self._case_store.search(
             vector=vector,
             filters=filters,
             limit=HYBRID_CANDIDATE_LIMIT,
+            query_text=request.query,
         )
-        return [self._match_to_case(match) for match in matches]
+        cases = [self._match_to_case(match) for match in matches]
+        reranked = self._reranker.rerank(request.query, cases, limit=request.top_k)
+        return self._to_response(request.query, reranked)
 
     def _search_repository(self, request: SearchRequest) -> SearchResponse | None:
         try:
@@ -93,61 +84,6 @@ class RetrievalService:
         ]
         return SearchResponse(query=request.query, total=len(scored_rows), results=results)
 
-    def _sparse_bm25_matches(self, request: SearchRequest, filters: dict) -> list[dict]:
-        rows = self._repository.search_cases(filters=filters, limit=500)
-        if not rows:
-            return []
-
-        tokenized_corpus = [self._tokens(row["case_text"]) for row in rows]
-        tokenized_query = self._tokens(request.query)
-        if not tokenized_query:
-            return []
-
-        try:
-            from rank_bm25 import BM25Okapi
-        except ImportError:
-            return self._fallback_sparse_matches(rows, tokenized_query)
-
-        bm25 = BM25Okapi(tokenized_corpus)
-        scores = bm25.get_scores(tokenized_query)
-        query_terms = set(tokenized_query)
-        scored = [
-            (float(score), self._row_to_case(row, score=float(score)))
-            for score, row, row_tokens in zip(scores, rows, tokenized_corpus, strict=False)
-            if float(score) > 0 or query_terms & set(row_tokens)
-        ]
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [case for _, case in scored[:HYBRID_CANDIDATE_LIMIT]]
-
-    @staticmethod
-    def _fallback_sparse_matches(rows: list[dict], tokenized_query: list[str]) -> list[dict]:
-        query_terms = set(tokenized_query)
-        scored = []
-        for row in rows:
-            text_terms = set(RetrievalService._tokens(row["case_text"]))
-            score = len(query_terms & text_terms) / max(len(query_terms), 1)
-            if score > 0:
-                scored.append((score, RetrievalService._row_to_case(row, score=score)))
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [case for _, case in scored[:HYBRID_CANDIDATE_LIMIT]]
-
-    @staticmethod
-    def _rrf_fuse(rankings: list[list[dict]]) -> list[dict]:
-        fused_scores: dict[str, float] = {}
-        cases_by_id: dict[str, dict] = {}
-        for ranking in rankings:
-            for rank, case in enumerate(ranking, start=1):
-                case_id = case["case_id"]
-                cases_by_id.setdefault(case_id, case)
-                fused_scores[case_id] = fused_scores.get(case_id, 0.0) + 1 / (RRF_K + rank)
-
-        fused = [
-            {**cases_by_id[case_id], "score": score}
-            for case_id, score in fused_scores.items()
-        ]
-        fused.sort(key=lambda item: item["score"], reverse=True)
-        return fused
-
     @staticmethod
     def _match_to_case(match: dict) -> dict:
         payload = match["payload"]
@@ -160,20 +96,6 @@ class RetrievalService:
             "absences": payload.get("absences", 0),
             "final_grade": payload.get("final_grade", 0),
             "case_text": payload.get("case_text", ""),
-        }
-
-    @staticmethod
-    def _row_to_case(row: dict, *, score: float) -> dict:
-        payload = row["payload"]
-        return {
-            "case_id": row["case_id"],
-            "student_id": row["student_id"],
-            "score": score,
-            "school": payload.get("school", "NA"),
-            "failures": payload.get("failures", 0),
-            "absences": payload.get("absences", 0),
-            "final_grade": payload.get("final_grade", 0),
-            "case_text": row["case_text"],
         }
 
     @staticmethod
@@ -192,14 +114,6 @@ class RetrievalService:
             for case in cases
         ]
         return SearchResponse(query=query, total=len(cases), results=results)
-
-    @staticmethod
-    def _tokens(text: str) -> list[str]:
-        return [
-            token.strip(".,:;!?()[]{}").lower()
-            for token in text.split()
-            if token.strip(".,:;!?()[]{}")
-        ]
 
     @staticmethod
     def _structured_similarity(filters: dict, payload: dict) -> float:

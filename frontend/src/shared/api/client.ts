@@ -25,9 +25,25 @@ const ATTENDANCE_WINDOW = 15;
 const authTokenKey = "student-success-auth-token";
 const authUserKey = "student-success-auth-user";
 
+function setCookie(name: string, value: string, days: number): void {
+  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(
+    new RegExp(`(?:^|; )${encodeURIComponent(name)}=([^;]*)`),
+  );
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function removeCookie(name: string): void {
+  document.cookie = `${encodeURIComponent(name)}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+}
+
 export function getStoredAuthSession(): Pick<AuthSession, "token" | "username"> | null {
-  const token = localStorage.getItem(authTokenKey);
-  const username = localStorage.getItem(authUserKey);
+  const token = getCookie(authTokenKey);
+  const username = getCookie(authUserKey);
   if (!token || !username) {
     return null;
   }
@@ -35,17 +51,17 @@ export function getStoredAuthSession(): Pick<AuthSession, "token" | "username"> 
 }
 
 export function storeAuthSession(session: AuthSession): void {
-  localStorage.setItem(authTokenKey, session.token);
-  localStorage.setItem(authUserKey, session.username);
+  setCookie(authTokenKey, session.token, 7);
+  setCookie(authUserKey, session.username, 7);
 }
 
 export function clearAuthSession(): void {
-  localStorage.removeItem(authTokenKey);
-  localStorage.removeItem(authUserKey);
+  removeCookie(authTokenKey);
+  removeCookie(authUserKey);
 }
 
 async function request<T>(path: string, init: RequestInit): Promise<T> {
-  const token = localStorage.getItem(authTokenKey);
+  const token = getCookie(authTokenKey);
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers: {
@@ -204,8 +220,9 @@ export async function updateFollowUpCase(
   });
 }
 
-export async function assessSavedFollowUpCase(caseId: string): Promise<FollowUpCaseResponse> {
-  return request<FollowUpCaseResponse>(`/follow-up/cases/${encodeURIComponent(caseId)}/assess`, {
+export async function assessSavedFollowUpCase(caseId: string, directDecision?: string): Promise<FollowUpCaseResponse> {
+  const params = directDecision ? `?direct_decision=${encodeURIComponent(directDecision)}` : "";
+  return request<FollowUpCaseResponse>(`/follow-up/cases/${encodeURIComponent(caseId)}/assess${params}`, {
     method: "POST",
     body: JSON.stringify({}),
   });

@@ -38,6 +38,7 @@ class IngestionService:
         if persist:
             self._repository.initialize()
 
+        batch: list[tuple[dict[str, Any], str, str, dict[str, Any]]] = []
         with source_path.open("r", encoding="utf-8-sig", newline="") as handle:
             delimiter = ";" if ";" in handle.readline() else ","
             handle.seek(0)
@@ -50,14 +51,21 @@ class IngestionService:
                     continue
 
                 payload = self._payload(student_case, row)
-                if persist:
-                    self._repository.upsert_student_case(
-                        student=payload,
-                        case_id=f"case-{student_case.student_id}",
-                        case_text=build_case_narrative(student_case),
-                        payload=payload | {"case_text": build_case_narrative(student_case)},
-                    )
+                narrative = build_case_narrative(student_case)
+                batch.append((
+                    payload,
+                    f"case-{student_case.student_id}",
+                    narrative,
+                    payload | {"case_text": narrative},
+                ))
                 imported += 1
+
+                if persist and len(batch) >= 500:
+                    self._repository.batch_upsert_student_cases(batch)
+                    batch.clear()
+
+            if persist and batch:
+                self._repository.batch_upsert_student_cases(batch)
 
         return IngestionResult(
             source_path=str(source_path),

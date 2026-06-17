@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from student_success_assistant.application.agent_tools import bump_cache
 from student_success_assistant.infrastructure.student_repository import StudentRepository
 from student_success_assistant.schemas.feedback import FeedbackRequest, FeedbackResponse
 
@@ -31,6 +32,8 @@ class FeedbackService:
                     "advisor_note": request.advisor_note,
                 }
             )
+
+        bump_cache()
 
         return FeedbackResponse(
             feedback_id=feedback_id,

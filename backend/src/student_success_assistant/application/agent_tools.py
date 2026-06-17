@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
 
 from student_success_assistant.application.intervention_planner import draft_intervention_plan
 from student_success_assistant.infrastructure.student_repository import StudentRepository
@@ -8,6 +10,13 @@ from student_success_assistant.schemas.prediction import PredictionResponse, Ris
 from student_success_assistant.schemas.retrieval import RetrievedCase
 
 SYSTEM_SCORE_COMPONENTS = {"base_risk", "score_cap", "score_floor"}
+CACHE_TTL = timedelta(seconds=300)
+_cache_buster = 0
+
+
+def bump_cache() -> None:
+    global _cache_buster
+    _cache_buster += 1
 
 
 @dataclass(frozen=True)
@@ -19,6 +28,22 @@ class AdvisorToolResult:
 class AdvisorToolRuntime:
     def __init__(self, repository: StudentRepository | None = None) -> None:
         self._repository = repository or StudentRepository()
+        self._cache: dict[str, tuple[Any, datetime]] = {}
+
+    def _cached(self, key: str, ttl: timedelta, fetch_fn):
+        if key in self._cache:
+            val, ts = self._cache[key]
+            if datetime.now() - ts < ttl:
+                return val
+        val = fetch_fn()
+        self._cache[key] = (val, datetime.now())
+        return val
+
+    def invalidate_cache(self, key: str | None = None) -> None:
+        if key:
+            self._cache.pop(key, None)
+        else:
+            self._cache.clear()
 
     def summarize_retrieved_cases(self, cases: list[RetrievedCase]) -> AdvisorToolResult:
         if not cases:
@@ -52,7 +77,7 @@ class AdvisorToolRuntime:
 
     def retrieve_feedback_examples(self, limit: int) -> AdvisorToolResult:
         try:
-            rows = self._repository.list_feedback_examples(limit=limit)
+            rows = self._cached(f"feedback:{_cache_buster}", CACHE_TTL, lambda: self._repository.list_feedback_examples(limit=limit))
         except RuntimeError:
             rows = []
 
@@ -73,7 +98,7 @@ class AdvisorToolRuntime:
 
     def retrieve_judge_examples(self, limit: int) -> AdvisorToolResult:
         try:
-            rows = self._repository.list_judged_recommendations(limit=limit)
+            rows = self._cached(f"judge:{_cache_buster}", CACHE_TTL, lambda: self._repository.list_judged_recommendations(limit=limit))
         except RuntimeError:
             rows = []
 
@@ -87,8 +112,10 @@ class AdvisorToolRuntime:
         for row in rows:
             scores = row.get("scores") or {}
             overall = scores.get("overall", "unknown") if isinstance(scores, dict) else "unknown"
+            notes = row.get("notes") or ""
+            note_suffix = f" | Notes: {notes}" if notes else ""
             examples.append(
-                f"overall={overall}: Query: {row['query']} | Recommendation: {row['recommendation']}"
+                f"overall={overall}: Query: {row['query']} | Recommendation: {row['recommendation']}{note_suffix}"
             )
         return AdvisorToolResult(name="retrieve_judge_examples", output="\n".join(examples))
 

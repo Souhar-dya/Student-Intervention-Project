@@ -22,6 +22,7 @@ class RecommendationService:
         student = request.prediction.student
         focused_search = request.search.model_copy(
             update={
+                "top_k": 3,
                 "query": (
                     f"{request.search.query} Current student: school={student.school}, "
                     f"attendance={student.attendance}%, failures={student.failures}, "
@@ -39,8 +40,8 @@ class RecommendationService:
         )
         retrieval = self._retrieval_service.search(focused_search)
 
-        evidence = [case.case_id for case in retrieval.results[:5]]
-        intervention = draft_intervention_plan(prediction, retrieval.results[:5])
+        evidence = [case.case_id for case in retrieval.results[:3]]
+        intervention = draft_intervention_plan(prediction, retrieval.results[:3])
 
         agent_response = self._agent_workflow.generate_recommendation(
             student_id=prediction.student_id,
@@ -48,7 +49,7 @@ class RecommendationService:
             context=GroundingContext(
                 query=request.search.query,
                 prediction=prediction,
-                retrieved_cases=retrieval.results[:5],
+                retrieved_cases=retrieval.results[:3],
                 student_profile_summary=(
                     f"school={student.school}, attendance={student.attendance}%, "
                     f"absences={student.absences}, failures={student.failures}, "

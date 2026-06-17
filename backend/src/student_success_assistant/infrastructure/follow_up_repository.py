@@ -177,6 +177,8 @@ class FollowUpRepository:
         if "status" in event_payload:
             if event_payload["status"] == "Closed":
                 field_sql.append("closed_at = COALESCE(closed_at, now())")
+            elif event_payload["status"] == "Removed":
+                pass
             else:
                 field_sql.append("closed_at = NULL")
         field_sql.append("updated_at = now()")
@@ -205,6 +207,8 @@ class FollowUpRepository:
                     )
             connection.commit()
 
+        if event_payload.get("status") == "Removed":
+            return None
         return self.get_case(case_id)
 
     def store_assessment(
@@ -218,6 +222,7 @@ class FollowUpRepository:
         next_steps: str,
         confidence: float,
         generated_by: str,
+        new_risk_category: str | None = None,
     ) -> FollowUpCaseResponse | None:
         self.initialize()
         with db_connection() as connection:
@@ -234,6 +239,7 @@ class FollowUpRepository:
                         follow_up_next_steps = %s,
                         follow_up_confidence = %s,
                         follow_up_generated_by = %s,
+                        risk_category = COALESCE(%s, risk_category),
                         follow_up_assessed_at = now(),
                         closed_at = CASE WHEN %s = 'Closed' THEN COALESCE(closed_at, now()) ELSE NULL END,
                         updated_at = now()
@@ -248,6 +254,7 @@ class FollowUpRepository:
                         next_steps,
                         confidence,
                         generated_by,
+                        new_risk_category,
                         recommended_status,
                         case_id,
                     ),

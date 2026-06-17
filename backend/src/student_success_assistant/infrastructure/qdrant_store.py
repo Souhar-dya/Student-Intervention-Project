@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from uuid import NAMESPACE_URL, uuid5
 
 from student_success_assistant.core.config import get_settings
+
+log = logging.getLogger(__name__)
 
 
 class QdrantCaseStore:
@@ -20,7 +24,11 @@ class QdrantCaseStore:
         client, models = self._client_and_models()
         existing = {collection.name for collection in client.get_collections().collections}
         if self._settings.qdrant_collection in existing:
-            return
+            if not self.has_sparse_support():
+                log.warning("Collection exists without sparse vectors — recreating for hybrid search")
+                client.delete_collection(self._settings.qdrant_collection)
+            else:
+                return
 
         client.create_collection(
             collection_name=self._settings.qdrant_collection,
@@ -28,7 +36,18 @@ class QdrantCaseStore:
                 size=self._settings.embedding_dimension,
                 distance=models.Distance.COSINE,
             ),
+            sparse_vectors_config={
+                "text": models.SparseVectorParams(),
+            },
         )
+
+    def has_sparse_support(self) -> bool:
+        try:
+            client, _ = self._client_and_models()
+            info = client.get_collection(self._settings.qdrant_collection)
+            return bool(info.config.params.sparse_vectors_config)
+        except Exception:
+            return False
 
     def upsert_cases(self, points: list[dict]) -> int:
         if not points:
@@ -48,9 +67,33 @@ class QdrantCaseStore:
         )
         return len(points)
 
-    def search(self, vector: list[float], filters: dict | None, limit: int) -> list[dict]:
+    def search(
+        self,
+        vector: list[float],
+        filters: dict | None,
+        limit: int,
+        query_text: str | None = None,
+    ) -> list[dict]:
         client, models = self._client_and_models()
         qdrant_filter = self._build_filter(models, filters or {})
+
+        if query_text and self.has_sparse_support():
+            try:
+                response = client.search(
+                    collection_name=self._settings.qdrant_collection,
+                    query_vector=vector,
+                    query=query_text,
+                    query_filter=qdrant_filter,
+                    limit=limit,
+                    with_payload=True,
+                )
+                return [
+                    {"id": str(point.id), "score": float(point.score), "payload": point.payload or {}}
+                    for point in response
+                ]
+            except Exception:
+                log.warning("Qdrant hybrid search failed, falling back to dense-only", exc_info=True)
+
         response = client.search(
             collection_name=self._settings.qdrant_collection,
             query_vector=vector,
@@ -59,11 +102,7 @@ class QdrantCaseStore:
             with_payload=True,
         )
         return [
-            {
-                "id": str(point.id),
-                "score": float(point.score),
-                "payload": point.payload or {},
-            }
+            {"id": str(point.id), "score": float(point.score), "payload": point.payload or {}}
             for point in response
         ]
 
@@ -79,7 +118,7 @@ class QdrantCaseStore:
         client = QdrantClient(
             url=self._settings.qdrant_url,
             api_key=self._settings.qdrant_api_key,
-            timeout=30,
+            timeout=120,
         )
         return client, models
 

@@ -11,7 +11,7 @@ from student_success_assistant.schemas.prediction import (
     RiskCategory,
 )
 
-BASE_RISK = 0.12
+BASE_RISK = 0.10
 GRADE_RISK_CAP = 0.38
 MAX_RISK_SCORE = 0.99
 MIN_RISK_SCORE = 0.01
@@ -96,7 +96,9 @@ class PredictionService:
         grade_risk = round(min(grade_severity * GRADE_RISK_CAP, GRADE_RISK_CAP), 3)
         return [
             FeatureContribution(feature="base_risk", contribution=BASE_RISK),
-            FeatureContribution(feature="failures", contribution=round(min(student.failures * 0.16, 0.48), 3)),
+            FeatureContribution(
+                feature="failures", contribution=round(min(student.failures * 0.16, 0.48), 3)
+            ),
             FeatureContribution(feature="attendance_gap", contribution=attendance_risk),
             FeatureContribution(feature="grade_gap", contribution=grade_risk),
             FeatureContribution(
@@ -181,7 +183,9 @@ class PredictionService:
             return None
 
     @staticmethod
-    def _model_weight_contributors(model: Any, features: dict[str, object]) -> list[FeatureContribution]:
+    def _model_weight_contributors(
+        model: Any, features: dict[str, object]
+    ) -> list[FeatureContribution]:
         try:
             vectorizer = model.named_steps["vectorizer"]
             classifier = model.named_steps["classifier"]

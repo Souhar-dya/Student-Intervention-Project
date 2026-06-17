@@ -6,6 +6,7 @@ from uuid import uuid4
 from student_success_assistant.application.llm_client import get_chat_llm
 
 log = logging.getLogger(__name__)
+from student_success_assistant.application.agent_tools import bump_cache
 from student_success_assistant.core.config import get_settings
 from student_success_assistant.infrastructure.student_repository import StudentRepository
 from student_success_assistant.schemas.evaluation import EvaluationRequest, EvaluationResponse, JudgeScores
@@ -21,7 +22,7 @@ class EvaluationService:
         return response
 
     def _evaluate_with_llm(self, request: EvaluationRequest) -> EvaluationResponse | None:
-        llm = get_chat_llm(model=get_settings().judge_model, temperature=0)
+        llm = get_chat_llm(model=get_settings().judge_model, temperature=0, max_tokens=200)
         if llm is None:
             log.warning("get_chat_llm returned None for judge model=%s provider=%s", get_settings().judge_model, get_settings().llm_provider)
             return None
@@ -112,6 +113,7 @@ class EvaluationService:
                 scores=response.scores.model_dump(),
                 notes=response.notes,
             )
+            bump_cache()
         except Exception:
             pass
 
