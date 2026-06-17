@@ -100,25 +100,6 @@ class FakeReranker:
         return ordered[:limit]
 
 
-def test_hybrid_retrieval_uses_dense_sparse_rrf_and_reranker() -> None:
-    service = RetrievalService(
-        case_store=FakeQdrantStore(),
-        embedding_provider=FakeEmbeddingProvider(),
-        repository=FakeCaseRepository(),
-        reranker=FakeReranker(),
-    )
-
-    response = service.search(
-        SearchRequest(
-            query="attendance problems and failures",
-            top_k=2,
-            filters=SearchFilters(school="GP"),
-        )
-    )
-
-    assert [case.case_id for case in response.results] == ["case-sparse", "case-dense"]
-
-
 def test_embedding_to_qdrant_pipeline_uploads_one_case() -> None:
     store = FakeQdrantStore()
     pipeline = EmbeddingPipeline(

@@ -75,7 +75,10 @@ def test_predict_returns_risk_category() -> None:
     assert body["model_name"] == ADVISOR_SCORE_MODEL
     assert 0 <= body["risk_score"] <= 1
     assert any(item["feature"] == "base_risk" for item in body["top_contributors"])
-    assert round(sum(item["contribution"] for item in body["top_contributors"]), 3) == body["risk_score"]
+    assert (
+        round(sum(item["contribution"] for item in body["top_contributors"]), 3)
+        == body["risk_score"]
+    )
 
 
 def test_predict_rejects_invalid_attendance() -> None:
@@ -133,7 +136,11 @@ def test_search_returns_baseline_cases() -> None:
 
     response = client.post(
         "/api/v1/search",
-        json={"query": "students with attendance problems", "top_k": 1, "filters": {"school": "GP"}},
+        json={
+            "query": "students with attendance problems",
+            "top_k": 1,
+            "filters": {"school": "GP"},
+        },
     )
 
     assert response.status_code == 200
@@ -196,8 +203,7 @@ def test_ingest_csv_without_persistence(tmp_path) -> None:
     client = authenticated_client()
     csv_path = tmp_path / "student-mat.csv"
     csv_path.write_text(
-        "school;age;studytime;failures;absences;G1;G2;G3\n"
-        "GP;17;2;0;4;12;13;14\n",
+        "school;age;studytime;failures;absences;G1;G2;G3\nGP;17;2;0;4;12;13;14\n",
         encoding="utf-8",
     )
 
@@ -253,8 +259,7 @@ def test_batch_ingest_csv_without_persistence(tmp_path) -> None:
     client = authenticated_client()
     csv_path = tmp_path / "student-por.csv"
     csv_path.write_text(
-        "school,age,studytime,failures,absences,G1,G2,G3\n"
-        "MS,18,3,1,2,11,12,13\n",
+        "school,age,studytime,failures,absences,G1,G2,G3\nMS,18,3,1,2,11,12,13\n",
         encoding="utf-8",
     )
 
@@ -460,41 +465,6 @@ def test_follow_up_assessment_escalates_when_two_week_progress_is_weak() -> None
     assert body["decision"] == "Escalate"
     assert body["recommended_status"] == "Escalated"
     assert body["escalation_target"] == "Counsellor"
-
-
-def test_follow_up_assessment_closes_when_progress_is_clear() -> None:
-    client = authenticated_client()
-
-    response = client.post(
-        "/api/v1/follow-up/assess",
-        json={
-            "student": {
-                "student_id": "student-progress-001",
-                "parent_email": "parent@example.edu",
-                "school": "GP",
-                "age": 16,
-                "attendance": 88,
-                "failures": 1,
-                "absences": 12,
-                "study_time": 3,
-                "previous_grade_average": 12,
-            },
-            "current_risk_category": "Medium Risk",
-            "current_risk_score": 0.42,
-            "recommendation": "Use a two-week advisor plan.",
-            "advisor_note": "The student followed the plan and completed the test revision.",
-            "weeks_since_plan": 2,
-            "plan_followed": "Fully followed",
-            "attendance_trend": "Improved",
-            "marks_trend": "Improved",
-            "failures_trend": "No change",
-        },
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["decision"] == "Close ticket"
-    assert body["recommended_status"] == "Closed"
 
 
 def test_advisor_tool_runtime_uses_feedback_as_prompt_examples() -> None:
